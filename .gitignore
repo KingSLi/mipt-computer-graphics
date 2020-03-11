@@ -17,4 +17,5 @@ external/*
 cmake-build-debug/*
 **/screenshots/*
 distrib/*
-
+tutorial*
+CMakeLists.txt
