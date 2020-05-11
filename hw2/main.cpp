@@ -18,8 +18,8 @@ using namespace glm;
 #include <common/shader.hpp>
 #include <common/texture.hpp>
 #include <common/controls.hpp>
-
-#include "hw2/objects/buffers.h"
+#include <common/objloader.hpp>
+#include <iostream>
 
 int initializeContext() {
     // Initialise GLFW
@@ -81,7 +81,7 @@ int initializeContext() {
 class Fireball{
 public:
     constexpr static float speed = 0.5f;
-    constexpr static float radius = 1.f;
+    constexpr static float radius = 0.1f;
     constexpr static float startDistance = 1.f;
 
     glm::vec3 position;
@@ -91,18 +91,108 @@ public:
     Fireball(glm::vec3 position, glm::vec3 direction) : position(position), direction(direction){}
 };
 
-void draw(GLuint Texture, GLuint TextureID, GLuint VertexBuffer, GLuint UVBuffer) {
+struct Object{
+    GLuint Id;
+    GLuint MatrixID;
+    GLuint VertexPositionModelspaceID;
+    GLuint VertexUVID;
+    GLuint Texture;
+    GLuint TextureID;
+
+    std::vector<glm::vec3> vertices;
+    std::vector<glm::vec2> uvs;
+    std::vector<glm::vec3> normals;
+
+    GLuint vertexbuffer;
+    GLuint uvbuffer;
+
+    explicit Object(const char* imagePath = "fire.DDS") {
+        Id = LoadShaders("TransformVertexShader.vertexshader", "TextureFragmentShader.fragmentshader");
+        MatrixID = glGetUniformLocation(Id, "MVP");
+        VertexPositionModelspaceID = glGetAttribLocation(Id, "vertexPosition_modelspace");
+        VertexUVID = glGetAttribLocation(Id, "vertexUV"); //!!!
+        // Load the texture
+        Texture = loadDDS(imagePath);
+        // Get a handle for our "myTextureSampler" uniform
+        TextureID  = glGetUniformLocation(Id, "myTextureSampler");
+    }
+
+    void load(const char * pathToObj) {
+        loadOBJ(pathToObj, vertices, uvs, normals);
+
+        glGenBuffers(1, &vertexbuffer);
+        glBindBuffer(GL_ARRAY_BUFFER, vertexbuffer);
+        glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(glm::vec3), &vertices[0], GL_STATIC_DRAW);
+
+        glGenBuffers(1, &uvbuffer);
+        glBindBuffer(GL_ARRAY_BUFFER, uvbuffer);
+        glBufferData(GL_ARRAY_BUFFER, uvs.size() * sizeof(glm::vec2), &uvs[0], GL_STATIC_DRAW);
+    }
+
+    size_t getVerticesSize() const {
+        return vertices.size();
+    }
+
+    void draw() {
+        // Bind our texture in Texture Unit 0
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, Texture);
+        // Set our "myTextureSampler" sampler to use Texture Unit 0
+        glUniform1i(TextureID, 0);
+
+        // 1rst attribute buffer : vertices
+        glEnableVertexAttribArray(VertexPositionModelspaceID);
+        glBindBuffer(GL_ARRAY_BUFFER, vertexbuffer);
+        glVertexAttribPointer(
+                VertexPositionModelspaceID,                  // attribute. No particular reason for 0, but must match the layout in the shader.
+                3,                  // size
+                GL_FLOAT,           // type
+                GL_FALSE,           // normalized?
+                0,                  // stride
+                (void*)0            // array buffer offset
+        );
+
+        // 2nd attribute buffer : UVs
+        glEnableVertexAttribArray(VertexUVID);
+        glBindBuffer(GL_ARRAY_BUFFER, uvbuffer);
+        glVertexAttribPointer(
+                VertexUVID,                                // attribute. No particular reason for 1, but must match the layout in the shader.
+                2,                                // size : U+V => 2
+                GL_FLOAT,                         // type
+                GL_FALSE,                         // normalized?
+                0,                                // stride
+                (void*)0                          // array buffer offset
+        );
+
+        // Draw the triangle !
+        glDrawArrays(GL_TRIANGLES, 0, getVerticesSize()); // 12*3 indices starting at 0 -> 12 triangles
+
+        glDisableVertexAttribArray(VertexPositionModelspaceID);
+        glDisableVertexAttribArray(VertexUVID);
+    }
+
+
+    ~Object() {
+        // Cleanup VBO and shader
+        glDeleteProgram(Id);
+        glDeleteTextures(1, &TextureID);
+        glDeleteBuffers(1, &vertexbuffer);
+        glDeleteBuffers(1, &uvbuffer);
+    }
+};
+
+void draw(Object& obj) {
     // Bind our texture in Texture Unit 0
     glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, Texture);
+    glBindTexture(GL_TEXTURE_2D, obj.Texture);
     // Set our "myTextureSampler" sampler to use Texture Unit 0
-    glUniform1i(TextureID, 0);
+    glUniform1i(obj.TextureID, 0);
 
     // 1rst attribute buffer : vertices
-    glEnableVertexAttribArray(0);
-    glBindBuffer(GL_ARRAY_BUFFER, VertexBuffer);
+    glEnableVertexAttribArray(obj.VertexPositionModelspaceID);
+    glBindBuffer(GL_ARRAY_BUFFER, obj.vertexbuffer);
     glVertexAttribPointer(
-            0,                  // attribute. No particular reason for 0, but must match the layout in the shader.
+            obj.VertexPositionModelspaceID,                  // attribute. No particular reason for 0, but must match the layout in the shader.
             3,                  // size
             GL_FLOAT,           // type
             GL_FALSE,           // normalized?
@@ -111,10 +201,10 @@ void draw(GLuint Texture, GLuint TextureID, GLuint VertexBuffer, GLuint UVBuffer
     );
 
     // 2nd attribute buffer : UVs
-    glEnableVertexAttribArray(1);
-    glBindBuffer(GL_ARRAY_BUFFER, UVBuffer);
+    glEnableVertexAttribArray(obj.VertexUVID);
+    glBindBuffer(GL_ARRAY_BUFFER, obj.uvbuffer);
     glVertexAttribPointer(
-            1,                                // attribute. No particular reason for 1, but must match the layout in the shader.
+            obj.VertexUVID,                                // attribute. No particular reason for 1, but must match the layout in the shader.
             2,                                // size : U+V => 2
             GL_FLOAT,                         // type
             GL_FALSE,                         // normalized?
@@ -123,7 +213,10 @@ void draw(GLuint Texture, GLuint TextureID, GLuint VertexBuffer, GLuint UVBuffer
     );
 
     // Draw the triangle !
-    glDrawArrays(GL_TRIANGLES, 0, 100 * 3); // 12*3 indices starting at 0 -> 12 triangles
+    glDrawArrays(GL_TRIANGLES, 0, obj.getVerticesSize()); // 12*3 indices starting at 0 -> 12 triangles
+
+    glDisableVertexAttribArray(obj.VertexPositionModelspaceID);
+    glDisableVertexAttribArray(obj.VertexUVID);
 }
 
 void calculate(GLuint objId, const glm::vec3& position, GLuint matrixID, glm::mat4& ModelMatrix, glm::mat4& MVP, glm::mat4& ProjectionMatrix, glm::mat4& ViewMatrix) {
@@ -139,52 +232,25 @@ void calculate(GLuint objId, const glm::vec3& position, GLuint matrixID, glm::ma
 }
 
 int getSign() {
-    return (std::rand() % 2 - 1 > 0) ? 1 : -1;
+    return ((std::rand() % 2) == 0) ? 1 : -1;
 }
 
 int main( void )
 {
 	// Initialise GLFW
-
 	initializeContext();
-    // Initialise GLFW
-	// Create and compile our GLSL program from the shaders
-//	GLuint programID = LoadShaders( "TransformVertexShader.vertexshader", "TextureFragmentShader.fragmentshader" );
-//	// Get a handle for our "MVP" uniform
-//	GLuint MatrixID = glGetUniformLocation(programID, "MVP");
 
+	Object fireballObj;
+    Object targetObj;
 
-    GLuint fireballId = LoadShaders("TransformVertexShader.vertexshader", "TextureFragmentShader.fragmentshader");
-    GLuint fireballMatrixID = glGetUniformLocation(fireballId, "MVP");
+    fireballObj.load("objects/fireball.obj");
+    targetObj.load("objects/target.obj");
 
-	// Load the texture
-	GLuint Texture = loadDDS("uvtemplate.DDS");
-
-	// Get a handle for our "myTextureSampler" uniform
-	GLuint TextureID  = glGetUniformLocation(fireballId, "myTextureSampler");
-
-	// Our vertices. Tree consecutive floats give a 3D vertex; Three consecutive vertices give a triangle.
-	// A cube has 6 faces with 2 triangles each, so this makes 6*2=12 triangles, and 12*3 vertices
-
-    GLuint targetId = LoadShaders( "SMALL.vertexshader", "ColorFragmentShader.fragmentshader" );
-    GLuint targetMatrixID = glGetUniformLocation(targetId, "MVP");
-
-
-	GLuint vertexbuffer;
-	glGenBuffers(1, &vertexbuffer);
-	glBindBuffer(GL_ARRAY_BUFFER, vertexbuffer);
-	glBufferData(GL_ARRAY_BUFFER, sizeof(g_vertex_buffer_data), g_vertex_buffer_data, GL_STATIC_DRAW);
-
-	GLuint uvbuffer;
-	glGenBuffers(1, &uvbuffer);
-	glBindBuffer(GL_ARRAY_BUFFER, uvbuffer);
-	glBufferData(GL_ARRAY_BUFFER, sizeof(g_uv_buffer_data), g_uv_buffer_data, GL_STATIC_DRAW);
-
-
-    int mouseState = GLFW_RELEASE;
-    constexpr auto targetRadius = 1.f;
+    constexpr float targetRadius = 1.f;
     constexpr int minTargetDistance = 5;
     constexpr int maxTargetDistance = 30;
+
+    int mouseState = GLFW_RELEASE;
 
     float lastSpawnTime = 0.f;
 
@@ -210,6 +276,7 @@ int main( void )
         ////////////////////////////////////////////////////////////////////////////
         ////////////////////////      Fireball        //////////////////////////////
         ////////////////////////////////////////////////////////////////////////////
+        glUseProgram(fireballObj.Id);
         int newState = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT);
         if (newState == GLFW_RELEASE && mouseState == GLFW_PRESS) {
             fireballs.push_back({getPosition() + getDirection() * float(Fireball::startDistance), getDirection()});
@@ -217,29 +284,28 @@ int main( void )
         mouseState = newState;
 
         for (auto& fireball: fireballs) {
-            calculate(fireballId, fireball.position, fireballMatrixID,ModelMatrix, MVP, ProjectionMatrix, ViewMatrix);
-            draw(Texture, TextureID, vertexbuffer, uvbuffer);
-
+            calculate(fireballObj.Id, fireball.position, fireballObj.MatrixID, ModelMatrix, MVP, ProjectionMatrix, ViewMatrix);
+            fireballObj.draw();
             fireball.position += fireball.direction * float(Fireball::speed);
         }
 
         ////////////////////////////////////////////////////////////////////////////
         ////////////////////////      Targets         //////////////////////////////
         ////////////////////////////////////////////////////////////////////////////
-        glUseProgram(targetId);
-
-        if (targets.empty() || (currTime - lastSpawnTime > 1.f)) {
+        glUseProgram(targetObj.Id);
+        if (targets.empty() || (currTime - lastSpawnTime > 1.5f)) {
             targets.push_back({
-                getPosition()[0] + getSign() * (std::rand() % (maxTargetDistance - minTargetDistance) + minTargetDistance),
-                getPosition()[1] + getSign() * (std::rand() % (maxTargetDistance - minTargetDistance) + minTargetDistance),
-                getPosition()[2] + getSign() * (std::rand() % (maxTargetDistance - minTargetDistance) + minTargetDistance)
+                getSign() * (std::rand() % (maxTargetDistance - minTargetDistance) + minTargetDistance),
+                getSign() * (std::rand() % (maxTargetDistance - minTargetDistance) + minTargetDistance),
+                getSign() * (std::rand() % (maxTargetDistance - minTargetDistance) + minTargetDistance)
             });
+            std::cout << targets.back()[0] << " " << targets.back()[0] << " " << targets.back()[0] << " " << std::endl;
             lastSpawnTime = currTime;
         }
 
         for (const auto& target : targets) {
-            calculate(targetId, target, targetMatrixID, ModelMatrix, MVP, ProjectionMatrix, ViewMatrix);
-            draw(Texture, TextureID, vertexbuffer, uvbuffer);
+            calculate(targetObj.Id, target, targetObj.MatrixID, ModelMatrix, MVP, ProjectionMatrix, ViewMatrix);
+            targetObj.draw();
         }
 
         ////////////////////////////////////////////////////////////////////////////
@@ -254,9 +320,6 @@ int main( void )
             }
         }
 
-        glDisableVertexAttribArray(0);
-        glDisableVertexAttribArray(1);
-
 		// Swap buffers
 		glfwSwapBuffers(window);
 		glfwPollEvents();
@@ -264,13 +327,6 @@ int main( void )
 	} // Check if the ESC key was pressed or the window was closed
 	while( glfwGetKey(window, GLFW_KEY_ESCAPE ) != GLFW_PRESS &&
 		   glfwWindowShouldClose(window) == 0 );
-
-//	// Cleanup VBO and shader
-	glDeleteBuffers(1, &vertexbuffer);
-	glDeleteBuffers(1, &uvbuffer);
-	glDeleteProgram(fireballId);
-	glDeleteTextures(1, &TextureID);
-
 	// Close OpenGL window and terminate GLFW
 	glfwTerminate();
 
