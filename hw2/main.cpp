@@ -80,8 +80,8 @@ int initializeContext() {
 
 class Fireball{
 public:
-    constexpr static float speed = 0.5f;
-    constexpr static float radius = 0.1f;
+    constexpr static float speed = 0.75f;
+    constexpr static float radius = 0.7f;
     constexpr static float startDistance = 1.f;
 
     glm::vec3 position;
@@ -106,7 +106,7 @@ struct Object{
     GLuint vertexbuffer;
     GLuint uvbuffer;
 
-    explicit Object(const char* imagePath = "fire.DDS") {
+    explicit Object(const char* imagePath) {
         Id = LoadShaders("TransformVertexShader.vertexshader", "TextureFragmentShader.fragmentshader");
         MatrixID = glGetUniformLocation(Id, "MVP");
         VertexPositionModelspaceID = glGetAttribLocation(Id, "vertexPosition_modelspace");
@@ -181,51 +181,17 @@ struct Object{
     }
 };
 
-void draw(Object& obj) {
-    // Bind our texture in Texture Unit 0
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, obj.Texture);
-    // Set our "myTextureSampler" sampler to use Texture Unit 0
-    glUniform1i(obj.TextureID, 0);
-
-    // 1rst attribute buffer : vertices
-    glEnableVertexAttribArray(obj.VertexPositionModelspaceID);
-    glBindBuffer(GL_ARRAY_BUFFER, obj.vertexbuffer);
-    glVertexAttribPointer(
-            obj.VertexPositionModelspaceID,                  // attribute. No particular reason for 0, but must match the layout in the shader.
-            3,                  // size
-            GL_FLOAT,           // type
-            GL_FALSE,           // normalized?
-            0,                  // stride
-            (void*)0            // array buffer offset
-    );
-
-    // 2nd attribute buffer : UVs
-    glEnableVertexAttribArray(obj.VertexUVID);
-    glBindBuffer(GL_ARRAY_BUFFER, obj.uvbuffer);
-    glVertexAttribPointer(
-            obj.VertexUVID,                                // attribute. No particular reason for 1, but must match the layout in the shader.
-            2,                                // size : U+V => 2
-            GL_FLOAT,                         // type
-            GL_FALSE,                         // normalized?
-            0,                                // stride
-            (void*)0                          // array buffer offset
-    );
-
-    // Draw the triangle !
-    glDrawArrays(GL_TRIANGLES, 0, obj.getVerticesSize()); // 12*3 indices starting at 0 -> 12 triangles
-
-    glDisableVertexAttribArray(obj.VertexPositionModelspaceID);
-    glDisableVertexAttribArray(obj.VertexUVID);
-}
-
-void calculate(GLuint objId, const glm::vec3& position, GLuint matrixID, glm::mat4& ModelMatrix, glm::mat4& MVP, glm::mat4& ProjectionMatrix, glm::mat4& ViewMatrix) {
+void calculatePosition(GLuint objId, const glm::vec3& position, GLuint matrixID, glm::mat4& ModelMatrix, glm::mat4& MVP, glm::mat4& ProjectionMatrix, glm::mat4& ViewMatrix, bool isCrossHair = false) {
     glUseProgram(objId);
     ModelMatrix = glm::mat4(0.7f);
     glm::vec3 myTranslationVector(position);
-
-    ModelMatrix = glm::translate(glm::mat4(), myTranslationVector) * ModelMatrix;
-    MVP = ProjectionMatrix * ViewMatrix * ModelMatrix;
+    if (isCrossHair) {
+        MVP = ModelMatrix;
+    }
+    else {
+        ModelMatrix = glm::translate(glm::mat4(), myTranslationVector) * ModelMatrix;
+        MVP = ProjectionMatrix * ViewMatrix * ModelMatrix;
+    }
     // Send our transformation to the currently bound shader,
     // in the "MVP" uniform
     glUniformMatrix4fv(matrixID, 1, GL_FALSE, &MVP[0][0]);
@@ -240,13 +206,15 @@ int main( void )
 	// Initialise GLFW
 	initializeContext();
 
-	Object fireballObj;
-    Object targetObj;
+	Object fireballObj("images/fire.DDS");
+    Object targetObj("images/new_target.DDS");
+    Object crossHairObj("images/new_target.DDS");
 
     fireballObj.load("objects/fireball.obj");
     targetObj.load("objects/target.obj");
+    crossHairObj.load("objects/crosshair.obj");
 
-    constexpr float targetRadius = 1.f;
+    constexpr float targetRadius = 3.f;
     constexpr int minTargetDistance = 5;
     constexpr int maxTargetDistance = 30;
 
@@ -256,8 +224,6 @@ int main( void )
 
     std::vector<Fireball> fireballs;
     std::vector<glm::vec3> targets;
-
-    std::srand(unsigned(time(0)));
 
 	do {
 
@@ -284,7 +250,8 @@ int main( void )
         mouseState = newState;
 
         for (auto& fireball: fireballs) {
-            calculate(fireballObj.Id, fireball.position, fireballObj.MatrixID, ModelMatrix, MVP, ProjectionMatrix, ViewMatrix);
+            calculatePosition(fireballObj.Id, fireball.position, fireballObj.MatrixID, ModelMatrix, MVP,
+                              ProjectionMatrix, ViewMatrix);
             fireballObj.draw();
             fireball.position += fireball.direction * float(Fireball::speed);
         }
@@ -299,14 +266,22 @@ int main( void )
                 getSign() * (std::rand() % (maxTargetDistance - minTargetDistance) + minTargetDistance),
                 getSign() * (std::rand() % (maxTargetDistance - minTargetDistance) + minTargetDistance)
             });
-            std::cout << targets.back()[0] << " " << targets.back()[0] << " " << targets.back()[0] << " " << std::endl;
             lastSpawnTime = currTime;
         }
 
         for (const auto& target : targets) {
-            calculate(targetObj.Id, target, targetObj.MatrixID, ModelMatrix, MVP, ProjectionMatrix, ViewMatrix);
+            calculatePosition(targetObj.Id, target, targetObj.MatrixID, ModelMatrix, MVP, ProjectionMatrix, ViewMatrix);
             targetObj.draw();
         }
+
+        ////////////////////////////////////////////////////////////////////////////
+        ////////////////////////      CrossHair       //////////////////////////////
+        ////////////////////////////////////////////////////////////////////////////
+
+        glUseProgram(crossHairObj.Id);
+        calculatePosition(crossHairObj.Id, getPosition(), crossHairObj.MatrixID, ModelMatrix, MVP,
+                          ProjectionMatrix, ViewMatrix, true);
+        crossHairObj.draw();
 
         ////////////////////////////////////////////////////////////////////////////
         ////////////////////////      Collider        //////////////////////////////
@@ -317,6 +292,10 @@ int main( void )
                     targets.erase(targets.begin() + target_idx);
                     fireballs.erase(fireballs.begin() + fireball_idx);
                 }
+            }
+            if (glm::distance(targets[target_idx], getPosition()) < targetRadius) {
+                std::cout << "You lose!" << std::endl;
+                return 0;
             }
         }
 
