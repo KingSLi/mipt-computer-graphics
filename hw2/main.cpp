@@ -63,7 +63,7 @@ int initializeContext() {
     glfwSetCursorPos(window, 1024/2, 768/2);
 
     // Dark blue background
-    glClearColor(0.0f, 0.0f, 0.4f, 0.0f);
+    glClearColor(0.4f, 0.5f, 1.f, 0.0f);
 
     // Enable depth test
     glEnable(GL_DEPTH_TEST);
@@ -106,13 +106,13 @@ struct Object{
     GLuint vertexbuffer;
     GLuint uvbuffer;
 
-    explicit Object(const char* imagePath) {
+    explicit Object(const char* imagePath, bool isDDS = true) {
         Id = LoadShaders("TransformVertexShader.vertexshader", "TextureFragmentShader.fragmentshader");
         MatrixID = glGetUniformLocation(Id, "MVP");
         VertexPositionModelspaceID = glGetAttribLocation(Id, "vertexPosition_modelspace");
         VertexUVID = glGetAttribLocation(Id, "vertexUV"); //!!!
         // Load the texture
-        Texture = loadDDS(imagePath);
+        Texture = isDDS ? loadDDS(imagePath) : loadBMP_custom(imagePath);
         // Get a handle for our "myTextureSampler" uniform
         TextureID  = glGetUniformLocation(Id, "myTextureSampler");
     }
@@ -206,12 +206,14 @@ int main( void )
 	// Initialise GLFW
 	initializeContext();
 
-	Object fireballObj("images/fire.DDS");
-    Object targetObj("images/new_target.DDS");
+	Object fireballObj("images/virus.bmp", false);
+    Object targetEarthObj("images/earthmap.bmp", false);
+    Object targetMarsObj("images/Mars.bmp", false);
     Object crossHairObj("images/new_target.DDS");
 
     fireballObj.load("objects/fireball.obj");
-    targetObj.load("objects/target.obj");
+    targetEarthObj.load("objects/target.obj");
+    targetMarsObj.load("objects/target.obj");
     crossHairObj.load("objects/crosshair.obj");
 
     constexpr float targetRadius = 3.f;
@@ -223,7 +225,8 @@ int main( void )
     float lastSpawnTime = 0.f;
 
     std::vector<Fireball> fireballs;
-    std::vector<glm::vec3> targets;
+    std::vector<std::pair<glm::vec3, size_t>> targets;
+    size_t targets_number = 0;
 
 	do {
 
@@ -259,19 +262,20 @@ int main( void )
         ////////////////////////////////////////////////////////////////////////////
         ////////////////////////      Targets         //////////////////////////////
         ////////////////////////////////////////////////////////////////////////////
-        glUseProgram(targetObj.Id);
-        if (targets.empty() || (currTime - lastSpawnTime > 1.5f)) {
-            targets.push_back({
+        if (targets.empty() || (currTime - lastSpawnTime > 2.f)) {
+            targets.push_back({{
                 getSign() * (std::rand() % (maxTargetDistance - minTargetDistance) + minTargetDistance),
                 getSign() * (std::rand() % (maxTargetDistance - minTargetDistance) + minTargetDistance),
                 getSign() * (std::rand() % (maxTargetDistance - minTargetDistance) + minTargetDistance)
-            });
+            }, targets_number++});
             lastSpawnTime = currTime;
         }
 
         for (const auto& target : targets) {
-            calculatePosition(targetObj.Id, target, targetObj.MatrixID, ModelMatrix, MVP, ProjectionMatrix, ViewMatrix);
-            targetObj.draw();
+            auto& obj = (target.second % 2 == 0) ? targetMarsObj : targetEarthObj;
+            glUseProgram(obj.Id);
+            calculatePosition(obj.Id, target.first, obj.MatrixID, ModelMatrix, MVP, ProjectionMatrix, ViewMatrix);
+            obj.draw();
         }
 
         ////////////////////////////////////////////////////////////////////////////
@@ -288,12 +292,15 @@ int main( void )
         ////////////////////////////////////////////////////////////////////////////
         for (size_t target_idx = 0; target_idx < targets.size(); ++target_idx) {
             for (size_t fireball_idx = 0; fireball_idx < fireballs.size(); ++fireball_idx) {
-                if (glm::distance(targets[target_idx], fireballs[fireball_idx].position) < Fireball::radius + targetRadius) {
+                if (glm::distance(targets[target_idx].first, fireballs[fireball_idx].position) < Fireball::radius + targetRadius) {
                     targets.erase(targets.begin() + target_idx);
                     fireballs.erase(fireballs.begin() + fireball_idx);
                 }
+                if (glm::distance(fireballs[fireball_idx].position, getPosition()) > 2 * maxTargetDistance) {
+                    fireballs.erase(fireballs.begin() + fireball_idx);
+                }
             }
-            if (glm::distance(targets[target_idx], getPosition()) < targetRadius) {
+            if (glm::distance(targets[target_idx].first, getPosition()) < targetRadius) {
                 std::cout << "You lose!" << std::endl;
                 return 0;
             }
